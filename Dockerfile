@@ -1,35 +1,34 @@
-# Dockerfile
+# Use official Python image (already has Python installed)
 FROM python:3.12-slim
 
-# System deps (for pdfplumber/pypdf + curl)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl gnupg \
-  && rm -rf /var/lib/apt/lists/*
+# Prevent Python buffering issues
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Install Google Cloud SDK (gcloud + gsutil)
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" \
-      > /etc/apt/sources.list.d/google-cloud-sdk.list \
-  && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
-  && apt-get update && apt-get install -y --no-install-recommends google-cloud-cli \
-  && rm -rf /var/lib/apt/lists/*
-
-# Install uv
-RUN pip install -U uv
+# Cloud Run expects port 8080
+ENV PORT=8080
 
 WORKDIR /app
 
-# Copy dependency files first for layer caching
+# Install system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install --no-cache-dir uv
+
+# Copy dependency files first (better Docker caching)
 COPY pyproject.toml uv.lock ./
 
-# Install deps into system site-packages
-RUN uv sync --frozen
+# Install Python dependencies INTO container
+RUN uv sync --no-dev
 
-# Copy the rest of the repo
+# Copy app code
 COPY . .
 
-# Cloud Run listens on $PORT
-ENV PORT=8080
+# Expose Cloud Run port
+EXPOSE 8080
 
-# Streamlit must bind to 0.0.0.0 and $PORT
-CMD ["bash", "-lc", "uv run streamlit run ui/app.py --server.address 0.0.0.0 --server.port $PORT"]
+# Start Streamlit correctly for Cloud Run
+CMD ["streamlit", "run", "ui/app.py", "--server.port=8080", "--server.address=0.0.0.0"]
