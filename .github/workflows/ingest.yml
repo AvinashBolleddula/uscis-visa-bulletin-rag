@@ -1,91 +1,43 @@
-#Big picture of the whole workflow
-	# ✅ Get code + deps
-	# ✅ Auth to GCP
-	# ✅ Download PDFs
-	# ✅ Build chunks + embeddings + Chroma persisted DB locally
-	# ✅ Upload that DB to GCS (so UI/service can use it)
-
-# workflow name
-# This is just the display name you’ll see in the GitHub Actions UI
 name: Ingest Visa Bulletins (V4) -> Chroma -> GCS
 
-# when it runs
-# workflow_dispatch: lets you run it manually from GitHub Actions
-# schedule: runs it on a timer using cron.
-# "30 9 * * 1" = every Monday at 09:30 UTC.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 9 * * 1" # Mondays 09:30 UTC (adjust later)
+    - cron: "30 9 * * 1"
 
-# permissions
-# This grants the workflow permission to read your repo code (checkout needs this).
-# No write permissions (more secure)
 permissions:
   contents: read
 
-# The job definition
-# Creates a job called ingest that runs on a fresh Linux VM provided by GitHub.
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    # Steps (these run in order)
     steps:
-      # Step A: Pull your repo code into the runner
-      # GitHub runner starts empty. This step downloads your repository content so scripts exist.
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Step B: Install Python
-      # Sets Python 3.12 so your scripts and uv can run reliably.
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-     
-      # Step C: Install uv
-      # Installs the uv CLI tool on the runner so you can run uv sync and uv run ....
-      - name: Install uv
-        run: |
-          pip install -U uv
-      
-      # Step D: Install dependencies from your lockfile
-      # This creates the virtual environment and installs exact pinned versions based on pyproject.toml + uv.lock.
-      # This is what makes CI reproducible.
-      - name: Install deps (uv)
-        run: |
-          uv sync
 
-      # Auth to Google Cloud (recommended: Workload Identity Federation)
-      # Step E: Authenticate to Google Cloud
-      # This is how the runner gets permission to:
-	    # call Vertex AI (for embeddings)
-	    # upload to GCS
-      # You’re using the best practice approach: Workload Identity Federation (WIF), meaning no long-lived JSON keys in GitHub.
+      - name: Install uv
+        run: pip install -U uv
+
+      - name: Install deps (uv)
+        run: uv sync
+
       - name: Auth to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      # Step F: Install gcloud tools (gsutil)
-      # Installs Google Cloud CLI tools on the runner.
-      # You need this for gsutil / GCS operations (or other gcloud commands).
+
       - name: Setup gcloud / gsutil
         uses: google-github-actions/setup-gcloud@v2
-      # Step G: Download the PDFs into data/
-      # Runs your script to fetch the latest visa bulletin PDFs and store them in ./data on the runner.
+
       - name: Download PDFs
-        run: |
-          uv run python scripts/download_pdfs.py --out-dir data
-      # Step H: Chunk + embed + ingest into local Chroma
-      # What happens here:
-	    # Loads PDFs from data/
-	    # Builds V4 chunks (hierarchical + row chunks)
-	    # Calls Vertex AI embeddings (text-embedding-005)
-	    # Writes the Chroma persisted DB into ./chroma
-	    # --wipe deletes the old collection first (fresh rebuild)
-      # Why env vars:
-	    # Vertex AI needs project + region to work.
+        run: uv run python scripts/download_pdfs.py --out-dir data
+
       - name: Ingest -> local chroma
         env:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
@@ -98,15 +50,8 @@ jobs:
             --embed-model text-embedding-005 \
             --wipe
 
-      # Step I: Upload the persisted Chroma folder to GCS
-      # This pushes the finished persisted vector DB (the ./chroma folder) to a GCS location like:
-      # gs://your-bucket/chroma/visa_bulletins/
-      # Why:
-	    # The GitHub runner VM gets deleted after the workflow ends.
-	    # GCS becomes your durable storage for the built vectorstore.
-	    # Your Streamlit app (Cloud Run later) can pull from GCS and load locally.
       - name: Upload Chroma to GCS
         env:
-          GCS_CHROMA_PATH: ${{ secrets.GCS_CHROMA_PATH }} # gs://bucket/prefix
+          GCS_CHROMA_PATH: ${{ secrets.GCS_CHROMA_PATH }}
         run: |
           uv run python scripts/gcs_sync.py --mode push --local ./chroma --gcs "$GCS_CHROMA_PATH"
