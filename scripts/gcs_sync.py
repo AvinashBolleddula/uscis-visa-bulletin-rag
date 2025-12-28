@@ -1,89 +1,90 @@
-# gcs_sync.py is a thin wrapper around gsutil rsync that lets you:
-# Push a local Chroma directory → GCS
-# Pull a GCS directory → local filesystem
-# This makes your vector store reproducible, portable, cloud-friendly and decoupled from notebooks or local machines
-
-
 #!/usr/bin/env python3
 """
-Sync a local folder to/from GCS using gsutil.
+Sync a local folder to/from GCS using google-cloud-storage (no gsutil needed).
 
 Examples:
-  # upload local chroma -> gcs
-  uv run python scripts/gcs_sync.py --mode push --local ./chroma --gcs gs://BUCKET/PREFIX
-
-  # download gcs -> local chroma
   uv run python scripts/gcs_sync.py --mode pull --local ./chroma --gcs gs://BUCKET/PREFIX
+  uv run python scripts/gcs_sync.py --mode push --local ./chroma --gcs gs://BUCKET/PREFIX
 """
-# __future__ annotations → cleaner typing (Python ≥3.10 best practice)
+
 from __future__ import annotations
 
-# argparse → parse CLI arguments (--mode, --local, --gcs)
 import argparse
-# subprocess → execute gsutil commands
-import subprocess
-# Path → safe, OS-independent path handling
+import os
 from pathlib import Path
+from typing import Tuple
 
-# Helper function: run
-# Prints the exact command being run (great for CI logs)
-# Executes the command
-# If the command fails → workflow fails immediately
-def run(cmd: list[str]) -> None:
-    print(" ".join(cmd))
-    subprocess.check_call(cmd)
+from google.cloud import storage
 
-# main entry point
+
+def parse_gs_uri(gs_uri: str) -> Tuple[str, str]:
+    if not gs_uri.startswith("gs://"):
+        raise ValueError("Expected gs://bucket/prefix")
+    rest = gs_uri[len("gs://") :]
+    parts = rest.split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    prefix = prefix.strip("/")
+    if prefix:
+        prefix += "/"
+    return bucket, prefix
+
+
+def ensure_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def pull_folder(bucket_name: str, prefix: str, local_dir: Path) -> None:
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    blobs = list(client.list_blobs(bucket_name, prefix=prefix))
+    if not blobs:
+        raise RuntimeError(f"No objects found at gs://{bucket_name}/{prefix}")
+
+    for b in blobs:
+        # skip "directory markers"
+        if b.name.endswith("/"):
+            continue
+        rel = b.name[len(prefix) :] if b.name.startswith(prefix) else b.name
+        out_path = local_dir / rel
+        ensure_parent(out_path)
+        b.download_to_filename(str(out_path))
+
+
+def push_folder(bucket_name: str, prefix: str, local_dir: Path) -> None:
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+
+    for p in local_dir.rglob("*"):
+        if p.is_dir():
+            continue
+        rel = p.relative_to(local_dir).as_posix()
+        blob = bucket.blob(prefix + rel)
+        blob.upload_from_filename(str(p))
+
+
 def main() -> int:
-    # Argument parsing
     ap = argparse.ArgumentParser()
-    # Direction of sync (push or pull)
     ap.add_argument("--mode", choices=["push", "pull"], required=True)
-    # Local folder path (./chroma)
     ap.add_argument("--local", required=True)
-    # GCS path (gs://bucket/prefix)
     ap.add_argument("--gcs", required=True)  # gs://bucket/prefix
     args = ap.parse_args()
-   
-    # Ensures the local directory exists before syncing
-    # Prevents gsutil rsync from failing due to missing path
-    # Works for both push & pull
+
     local = Path(args.local)
     local.mkdir(parents=True, exist_ok=True)
 
-    # push mode
-    # Syncs local → GCS
-    # -m = multi-threaded (faster)
-    # -r = recursive
-    # Trailing behavior copies contents, not parent folder
-    # ./chroma/
-        # ├── index/
-        # ├── collections/
-        # ├── sqlite.db
-    # to gs://bucket/chroma/
-    if args.mode == "push":
-        # ensure trailing slash so we copy contents
-        run(["gsutil", "-m", "rsync", "-r", str(local), args.gcs])
-    # Pull mode
-    # Syncs GCS → local
-    # used by streamlit app startup, local dev wnvironment, cloud run container etc.
+    bucket, prefix = parse_gs_uri(args.gcs)
+
+    if args.mode == "pull":
+        pull_folder(bucket, prefix, local)
     else:
-        run(["gsutil", "-m", "rsync", "-r", args.gcs, str(local)])
+        if not local.exists():
+            raise RuntimeError(f"Local dir not found: {local}")
+        push_folder(bucket, prefix, local)
 
     return 0
 
-# Script execution guard
-# Allows importing this file without executing it
-# 
+
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-# How this fits into your system (important)
-# In GitHub Actions : uv run python scripts/gcs_sync.py --mode push --local ./chroma --gcs gs://...
-# Builds vectors → pushes to GCS
-
-
-# In Streamlit / Cloud Run
-# python scripts/gcs_sync.py --mode pull --local ./chroma --gcs gs://...
-# Pulls vectors → loads Chroma locally → QA works
