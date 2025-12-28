@@ -5,8 +5,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Cloud Run expects port 8080
-ENV PORT=8080
+
 
 WORKDIR /app
 
@@ -22,7 +21,7 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 # Install Python dependencies INTO container
-RUN uv sync --no-dev
+RUN uv sync --no-dev --frozen
 
 # Copy app code
 COPY . .
@@ -31,4 +30,4 @@ COPY . .
 EXPOSE 8080
 
 # Start Streamlit correctly for Cloud Run
-CMD ["streamlit", "run", "ui/app.py", "--server.port=8080", "--server.address=0.0.0.0"]
+CMD ["sh", "-c", "uv run streamlit run ui/app.py --server.address 0.0.0.0 --server.port ${PORT:-8080} --server.headless true --server.enableCORS false --server.enableXsrfProtection false"]
