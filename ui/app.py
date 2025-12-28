@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 import sys
 from pathlib import Path
 
+# for running subprocesses, here used to sync GCS
+import subprocess
+
 # add repo root to python path so `import src...` works
 # Streamlit runs ui/app.py as the entrypoint, 
 # so Python may not know where src/ is. This makes import src.qa... work.
@@ -40,6 +43,42 @@ st.caption("Ask questions over Visa Bulletin PDFs using Chroma + Vertex AI (Gemi
 
 # Everything inside with st.sidebar: is just inputs for runtime config:
 with st.sidebar:
+    st.subheader("Sync Chroma from GCS")
+
+    gcs_chroma_path = st.text_input(
+        "GCS_CHROMA_PATH",
+        value=os.getenv("GCS_CHROMA_PATH", ""),
+        placeholder="gs://bucket/prefix/chroma",
+        help="GCS folder that contains the Chroma persisted directory.",
+    )
+
+    if st.button("⬇️ Update from GCS", use_container_width=True):
+        if not gcs_chroma_path.strip():
+            st.error("Set GCS_CHROMA_PATH (e.g., gs://bucket/prefix/chroma).")
+        else:
+            with st.spinner("Pulling Chroma directory from GCS..."):
+                try:
+                    cmd = [
+                        sys.executable,  # uses same venv python under uv
+                        "scripts/gcs_sync.py",
+                        "--mode",
+                        "pull",
+                        "--local",
+                        os.getenv("CHROMA_PERSIST_DIR", "./chroma"),
+                        "--gcs",
+                        gcs_chroma_path.strip(),
+                    ]
+                    subprocess.check_call(cmd)
+
+                    # Clear cached QA object so it reloads from refreshed persist_dir
+                    st.cache_resource.clear()
+
+                    st.success("✅ Updated local Chroma from GCS. Reloading…")
+                    st.rerun()
+                except subprocess.CalledProcessError as e:
+                    st.error("GCS sync failed.")
+                    st.code(str(e))
+    st.divider()
     st.header("Configuration")
 
     persist_dir = st.text_input(
@@ -83,6 +122,8 @@ with st.sidebar:
     category = st.text_input("category", value="", placeholder="F2A / EB-2 / ...")
 
     st.caption("Filters are applied as a Chroma `where` clause when provided.")
+    
+
 
 # Build where filter
 # Creates the where dict you pass to qa.ask(...). If empty, you pass None.
