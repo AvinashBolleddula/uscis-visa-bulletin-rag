@@ -18,6 +18,7 @@ from pathlib import Path
 # for running subprocesses, here used to sync GCS
 import subprocess
 
+import time
 # add repo root to python path so `import src...` works
 # Streamlit runs ui/app.py as the entrypoint, 
 # so Python may not know where src/ is. This makes import src.qa... work.
@@ -134,6 +135,52 @@ if month.strip():
     where["month"] = month.strip()
 if category.strip():
     where["category"] = category.strip()
+
+# helper function
+# Check if CHROMA_PERSIST_DIR exists and is non-empty
+# If not → run gcs_sync.py --mode pull
+# Then continue with normal QA initialization
+def ensure_chroma_available(persist_dir: str, gcs_path: str) -> None:
+    """
+    If persist_dir is missing or empty, pull Chroma from GCS.
+    """
+    p = Path(persist_dir)
+
+    # If directory exists and has files, assume it's ready
+    if p.exists() and any(p.iterdir()):
+        return
+
+    if not gcs_path:
+        raise RuntimeError(
+            f"Chroma directory '{persist_dir}' is empty and GCS_CHROMA_PATH is not set."
+        )
+
+    p.mkdir(parents=True, exist_ok=True)
+
+    st.info("📥 First Streamlit Run, So Local Chroma not found. Synced from GCS...")
+    subprocess.check_call(
+        [
+            "python",
+            "scripts/gcs_sync.py",
+            "--mode",
+            "pull",
+            "--local",
+            persist_dir,
+            "--gcs",
+            gcs_path,
+        ]
+    )
+    
+
+# run to check + pull if needed
+gcs_chroma_path = os.getenv("GCS_CHROMA_PATH", "")
+
+try:
+    ensure_chroma_available(persist_dir, gcs_chroma_path)
+except Exception as e:
+    st.error("Failed to prepare Chroma vector store.")
+    st.code(str(e))
+    st.stop()
 
 # -------------------------
 # Initialize QA
