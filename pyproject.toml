@@ -1,0 +1,20 @@
+[project]
+name = "uscis-visa-bulletin-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12.0"
+dependencies = [
+    "chromadb>=1.4.0",
+    "google-cloud-aiplatform>=1.132.0",
+    "ipykernel>=7.1.0",
+    "langchain>=1.2.0",
+    "langchain-community>=0.4.1",
+    "langchain-google-vertexai>=3.2.0",
+    "langchain-text-splitters>=1.1.0",
+    "pdfplumber>=0.11.8",
+    "pypdf>=6.5.0",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+    "streamlit>=1.52.2",
+]
