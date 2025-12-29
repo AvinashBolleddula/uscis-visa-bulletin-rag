@@ -5,6 +5,8 @@ A production-grade cloud-native **Retrieval-Augmented Generation (RAG)** system 
 👉 **Live Demo:**  
 https://uscis-visa-bulletin-rag-ui-947807269152.us-central1.run.app/
 
+👉 Demo URL is provided for convenience; availability depends on cloud billing and quotas.
+
 ## 🚀 What This Project Does
 
 - 📄 **Automatically downloads** monthly USCIS Visa Bulletin PDFs
@@ -501,5 +503,6 @@ http://localhost:8501
 - **Deploy to Cloud Run**
 - **Extend to FastAPI**
 - **Add auth, rate limits, or multi-tenant support 🚀**
+
 
 
